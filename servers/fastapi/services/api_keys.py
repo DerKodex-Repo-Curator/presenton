@@ -36,15 +36,15 @@ def build_api_key(api_key_id: str, secret: str) -> str:
     return f"{API_KEY_PREFIX}{api_key_id}.{secret}"
 
 
-def _api_key_cipher() -> Fernet:
+def _api_key_cipher(secret: str) -> Fernet:
     encryption_key = hashlib.sha256(
-        get_or_create_auth_secret().encode("utf-8")
+        secret.encode("utf-8")
     ).digest()
     return Fernet(base64.urlsafe_b64encode(encryption_key))
 
 
-def encrypt_api_key(token: str) -> str:
-    return _api_key_cipher().encrypt(token.encode("utf-8")).decode("ascii")
+def encrypt_api_key(token: str, secret: str) -> str:
+    return _api_key_cipher(secret).encrypt(token.encode("utf-8")).decode("ascii")
 
 
 def parse_api_key(token: str) -> tuple[str, str] | None:
@@ -61,11 +61,11 @@ def parse_api_key(token: str) -> tuple[str, str] | None:
     return api_key_id, secret
 
 
-def reveal_api_key(api_key: ApiKey) -> str | None:
+async def reveal_api_key(session: AsyncSession, api_key: ApiKey) -> str | None:
     if not api_key.token_encrypted:
         return None
     try:
-        token = _api_key_cipher().decrypt(
+        token = _api_key_cipher(await get_or_create_auth_secret(session)).decrypt(
             api_key.token_encrypted.encode("ascii")
         ).decode("utf-8")
     except (InvalidToken, UnicodeError, ValueError):
@@ -95,7 +95,7 @@ async def issue_api_key(
         created_by_id=created_by_id,
         label=label.strip() or "API client",
         secret_hash=PASSWORD_HELPER.hash(secret),
-        token_encrypted=encrypt_api_key(token),
+        token_encrypted=encrypt_api_key(token, await get_or_create_auth_secret(session)),
         expires_at=get_current_utc_datetime() + timedelta(days=expiry_days),
     )
     session.add(api_key)

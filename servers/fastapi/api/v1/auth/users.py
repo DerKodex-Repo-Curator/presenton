@@ -173,11 +173,12 @@ class VersionedJWTStrategy(JWTStrategy[User, uuid.UUID]):
         )
 
 
-def get_jwt_strategy(
+async def get_jwt_strategy(
+    session: AsyncSession = Depends(get_async_session),
     lifetime_seconds: int = SESSION_TTL_SECONDS,
 ) -> VersionedJWTStrategy:
     return VersionedJWTStrategy(
-        secret=get_or_create_auth_secret(),
+        secret=await get_or_create_auth_secret(session),
         lifetime_seconds=lifetime_seconds,
     )
 
@@ -203,7 +204,8 @@ async def read_user_from_cookie(
     request: Request,
     user_manager: UserManager = Depends(get_user_manager),
 ) -> User | None:
-    return await get_jwt_strategy().read_token(
+    strategy = await get_jwt_strategy(user_manager.user_db.session)
+    return await strategy.read_token(
         request.cookies.get(SESSION_COOKIE_NAME), user_manager
     )
 

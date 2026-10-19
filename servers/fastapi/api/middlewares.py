@@ -17,17 +17,20 @@ from models.sql.user import User
 from services.database import async_session_maker
 from services.presenton_cloud_proxy import maybe_proxy_presenton_cloud_request
 from utils.get_env import is_disable_auth_enabled
-from utils.user_config import update_env_with_user_config
+from utils.user_config import update_env_with_provider_config
+from services.provider_settings import get_provider_settings
 
 
-class UserConfigEnvUpdateMiddleware(BaseHTTPMiddleware):
+class ProviderConfigMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        update_env_with_user_config()
+        async with async_session_maker() as session:
+            update_env_with_provider_config(await get_provider_settings(session))
         return await call_next(request)
 
 
 class SessionAuthMiddleware(BaseHTTPMiddleware):
     _PUBLIC_AUTH_PATHS = {
+        "/api/v1/config/telemetry",
         "/api/v1/auth/status",
         "/api/v1/auth/verify",
         "/api/v1/auth/setup",
@@ -119,7 +122,7 @@ class SessionAuthMiddleware(BaseHTTPMiddleware):
             request.state.auth_username = principal.username
             if principal.method == "api_key" and user is not None:
                 request.state.internal_session_token = (
-                    await get_jwt_strategy().write_token(user)
+                    await (await get_jwt_strategy(session)).write_token(user)
                 )
             context_token = set_current_owner_id(principal.user_id)
             admin_context_token = set_current_owner_is_admin(principal.is_admin)

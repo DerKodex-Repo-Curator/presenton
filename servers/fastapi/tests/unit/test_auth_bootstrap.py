@@ -1,7 +1,7 @@
+from models.sql.key_value import KeyValueSqlModel
 import asyncio
 from datetime import timedelta
 import json
-import stat
 
 import pytest
 from sqlalchemy import select
@@ -19,6 +19,7 @@ async def _create_auth_database(database_path):
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.run_sync(User.__table__.create)
+        await connection.run_sync(KeyValueSqlModel.__table__.create)
         await connection.run_sync(ApiKey.__table__.create)
     return engine, session_maker
 
@@ -101,13 +102,11 @@ def test_reset_auth_recovers_admin_without_replacing_account(
 
     asyncio.run(runner())
 
+    # Recovery updates DB credentials and signing key, never the legacy file.
     config = json.loads(config_path.read_text())
-    assert config["AUTH_USERNAME"] == "recovered-admin"
-    assert config["AUTH_PASSWORD_HASH"] != "old-hash"
-    assert config["AUTH_SECRET_KEY"] != "old-secret"
-    assert config["LLM_PROVIDER"] == "openai"
-    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
-    assert stat.S_IMODE((tmp_path / "userConfig.json.bak").stat().st_mode) == 0o600
+    assert config["AUTH_USERNAME"] == "old-admin"
+    assert config["AUTH_SECRET_KEY"] == "old-secret"
+    assert not (tmp_path / "userConfig.json.bak").exists()
 
 
 def test_reset_auth_without_password_refuses_to_delete_or_replace_admin(

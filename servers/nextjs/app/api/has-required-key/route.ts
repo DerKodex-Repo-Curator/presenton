@@ -1,22 +1,16 @@
 import { NextResponse } from "next/server";
-import { readUserConfigFile } from "@/lib/user-config-store";
+import { readRuntimeProviderConfig } from "@/lib/runtime-provider-config";
+import { authStatusForRequest } from "@/lib/server-auth-role";
 
 export const dynamic = "force-dynamic";
-
-export async function GET() {
-  const userConfigPath = process.env.USER_CONFIG_PATH;
-
-  let keyFromFile = "";
-  if (userConfigPath) {
-    try {
-      const cfg = readUserConfigFile<{ OPENAI_API_KEY?: string }>(userConfigPath);
-      keyFromFile = cfg?.OPENAI_API_KEY || "";
-    } catch {
-      keyFromFile = "";
-    }
+export async function GET(request: Request) {
+  if (!(await authStatusForRequest(request)).authenticated) {
+    return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
   }
-  const keyFromEnv = process.env.OPENAI_API_KEY || "";
-  const hasKey = Boolean((keyFromFile || keyFromEnv).trim());
-
-  return NextResponse.json({ hasKey });
+  try {
+    const { config } = await readRuntimeProviderConfig(request);
+    return NextResponse.json({ hasKey: Boolean(config.OPENAI_API_KEY) });
+  } catch {
+    return NextResponse.json({ hasKey: false }, { status: 503 });
+  }
 }

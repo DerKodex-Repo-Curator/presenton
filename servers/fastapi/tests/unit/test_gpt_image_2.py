@@ -13,7 +13,7 @@ from services.image_generation_service import ImageGenerationService
 from utils.get_env import get_gpt_image_2_quality_env
 from utils.image_provider import get_selected_image_provider
 from utils.model_availability import _check_image_provider_configuration
-from utils.user_config import get_user_config, update_env_with_user_config
+from utils.user_config import update_env_with_provider_config
 
 
 @pytest.fixture
@@ -88,8 +88,8 @@ def test_gpt_image_2_quality_config_round_trip(monkeypatch, tmp_path):
     config_path.write_text(json.dumps(
         UserConfig(IMAGE_PROVIDER="gpt-image-2", GPT_IMAGE_2_QUALITY="high").model_dump()
     ))
-    update_env_with_user_config()
-    config = get_user_config()
+    config = UserConfig.model_validate_json(config_path.read_text())
+    update_env_with_provider_config(config.model_dump())
     assert config.IMAGE_PROVIDER == "gpt-image-2"
     assert config.GPT_IMAGE_2_QUALITY == "high"
     assert os.getenv("GPT_IMAGE_2_QUALITY") == "high"

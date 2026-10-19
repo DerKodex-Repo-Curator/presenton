@@ -71,7 +71,7 @@ def test_reset_advanced_settings_removes_only_optional_overrides():
     }
 
 
-def test_startup_migrates_user_config_and_rewrites_compatibility_file(
+def test_startup_imports_legacy_config_without_rewriting_file(
     monkeypatch, tmp_path
 ):
     path = tmp_path / "userConfig.json"
@@ -90,10 +90,9 @@ def test_startup_migrates_user_config_and_rewrites_compatibility_file(
 
     migrated = asyncio.run(migrate_provider_settings_from_file(session))
 
-    assert migrated == {
-        "LLM": "openai",
-        "OPENAI_API_KEY": "provider-key",
-    }
+    assert migrated["LLM"] == "openai"
+    assert migrated["OPENAI_API_KEY"] == "provider-key"
+    assert "AUTH_SECRET_KEY" not in migrated
     assert session.row.config == migrated
     assert read_user_config_file(str(path)) == {
         "LLM": "openai",
@@ -102,3 +101,52 @@ def test_startup_migrates_user_config_and_rewrites_compatibility_file(
         "AUTH_PASSWORD_HASH": "legacy-hash",
         "AUTH_SECRET_KEY": "jwt-secret",
     }
+
+
+def test_existing_database_wins_over_legacy_file_and_environment(monkeypatch, tmp_path):
+    from models.sql.provider_settings import ProviderSettings
+    path = tmp_path / "userConfig.json"
+    path.write_text('{"OPENAI_API_KEY":"stale-file-key","LLM":"google"}')
+    original = path.read_bytes()
+    monkeypatch.setenv("USER_CONFIG_PATH", str(path))
+    monkeypatch.setenv("OPENAI_API_KEY", "stale-environment-key")
+    session = ProviderSettingsSession()
+    session.row = ProviderSettings(id=1, config={"LLM": "openai", "OPENAI_API_KEY": "database-key"})
+    assert asyncio.run(migrate_provider_settings_from_file(session)) == session.row.config
+    assert path.read_bytes() == original
+
+
+def test_first_import_uses_environment_only_for_missing_legacy_values(monkeypatch, tmp_path):
+    path = tmp_path / "userConfig.json"
+    path.write_text('{"LLM":"custom","CUSTOM_MODEL":"saved-model","DISABLE_IMAGE_GENERATION":false}')
+    monkeypatch.setenv("USER_CONFIG_PATH", str(path))
+    monkeypatch.setenv("CUSTOM_MODEL", "environment-model")
+    monkeypatch.setenv("CUSTOM_LLM_URL", "http://provider:8080/v1")
+    monkeypatch.setenv("DISABLE_IMAGE_GENERATION", "true")
+    session = ProviderSettingsSession()
+    config = asyncio.run(migrate_provider_settings_from_file(session))
+    assert config["CUSTOM_MODEL"] == "saved-model"
+    assert config["CUSTOM_LLM_URL"] == "http://provider:8080/v1"
+    assert config["DISABLE_IMAGE_GENERATION"] is False
+
+
+def test_new_deployment_does_not_create_legacy_file(monkeypatch, tmp_path):
+    path = tmp_path / "userConfig.json"
+    monkeypatch.setenv("USER_CONFIG_PATH", str(path))
+    monkeypatch.setenv("LLM", "custom")
+    monkeypatch.setenv("CUSTOM_MODEL", "model")
+    monkeypatch.setenv("CUSTOM_LLM_URL", "http://provider:8080/v1")
+    config = asyncio.run(migrate_provider_settings_from_file(ProviderSettingsSession()))
+    assert config["CUSTOM_MODEL"] == "model"
+    assert not path.exists()
+
+
+def test_corrupt_legacy_config_is_not_silently_imported_as_empty(monkeypatch, tmp_path):
+    import pytest
+    path = tmp_path / "userConfig.json"
+    path.write_text("invalid json")
+    monkeypatch.setenv("USER_CONFIG_PATH", str(path))
+    session = ProviderSettingsSession()
+    with pytest.raises(RuntimeError, match="legacy configuration"):
+        asyncio.run(migrate_provider_settings_from_file(session))
+    assert session.row is None

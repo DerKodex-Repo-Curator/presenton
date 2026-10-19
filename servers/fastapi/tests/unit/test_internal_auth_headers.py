@@ -1,3 +1,4 @@
+from models.sql.key_value import KeyValueSqlModel
 import asyncio
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -24,6 +25,7 @@ def test_internal_headers_use_current_users_database_jwt(monkeypatch, tmp_path):
         try:
             async with engine.begin() as connection:
                 await connection.run_sync(User.__table__.create)
+                await connection.run_sync(KeyValueSqlModel.__table__.create)
             async with session_maker() as session:
                 user = User(
                     username="admin",
@@ -47,7 +49,7 @@ def test_internal_headers_use_current_users_database_jwt(monkeypatch, tmp_path):
             cookie = headers["Cookie"]
             token = cookie.removeprefix(f"{SESSION_COOKIE_NAME}=")
             async with session_maker() as session:
-                authenticated = await get_jwt_strategy().read_token(
+                authenticated = await (await get_jwt_strategy(session)).read_token(
                     token,
                     UserManager(UsernameUserDatabase(session)),
                 )

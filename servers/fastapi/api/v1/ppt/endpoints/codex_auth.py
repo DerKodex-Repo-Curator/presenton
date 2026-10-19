@@ -43,7 +43,7 @@ from utils.set_env import (
     set_codex_model_env,
     set_codex_username_env,
 )
-from utils.user_config import save_codex_tokens_to_user_config
+from utils.user_config import save_codex_tokens_to_database
 
 CODEX_AUTH_ROUTER = APIRouter(prefix="/codex/auth", tags=["Codex OAuth"])
 CHATGPT_AUTH_REQUIRED_HEADERS = {"X-Presenton-Auth-Action": "codex-reauth"}
@@ -111,7 +111,7 @@ def _parse_optional_bool(value: Optional[str]) -> Optional[bool]:
 
 
 def _store_token(result: TokenSuccess) -> CodexAccountProfile:
-    """Persist token fields in env vars and userConfig.json. Returns parsed profile."""
+    """Persist token fields in runtime variables and the database. Returns parsed profile."""
     set_codex_access_token_env(result.access)
     set_codex_refresh_token_env(result.refresh)
     set_codex_token_expires_env(str(result.expires))
@@ -122,7 +122,7 @@ def _store_token(result: TokenSuccess) -> CodexAccountProfile:
     set_codex_email_env(profile.email or "")
     set_codex_is_pro_env("" if profile.is_pro is None else str(profile.is_pro))
 
-    save_codex_tokens_to_user_config()
+    save_codex_tokens_to_database()
     return profile
 
 
@@ -335,7 +335,7 @@ async def get_codex_auth_status():
 @CODEX_AUTH_ROUTER.post("/logout")
 async def logout_codex():
     """
-    Clear all stored Codex OAuth credentials from environment variables and userConfig.json.
+    Clear all stored Codex OAuth credentials from runtime variables and the database.
     """
     set_codex_access_token_env("")
     set_codex_refresh_token_env("")
@@ -345,5 +345,5 @@ async def logout_codex():
     set_codex_email_env("")
     set_codex_is_pro_env("")
     set_codex_model_env("")
-    save_codex_tokens_to_user_config(include_model=True)
+    save_codex_tokens_to_database(include_model=True)
     return {"detail": "Logged out successfully"}

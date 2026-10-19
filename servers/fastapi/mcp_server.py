@@ -293,14 +293,10 @@ class PresentonTokenVerifier(TokenVerifier):
             if verified is None:
                 return None
             user = verified.user
-            try:
-                internal_session_token = await get_jwt_strategy(
-                    lifetime_seconds=MCP_INTERNAL_SESSION_TTL_SECONDS
-                ).write_token(user)
-            except ValueError:
-                # Unit tests and incomplete development shells may not have a
-                # USER_CONFIG_PATH. Production startup always creates it.
-                internal_session_token = None
+            strategy = await get_jwt_strategy(
+                session, lifetime_seconds=MCP_INTERNAL_SESSION_TTL_SECONDS
+            )
+            internal_session_token = await strategy.write_token(user)
 
         return AccessToken(
             token=token,

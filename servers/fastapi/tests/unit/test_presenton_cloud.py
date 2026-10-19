@@ -1,3 +1,4 @@
+from models.sql.key_value import KeyValueSqlModel
 import asyncio
 
 import httpx
@@ -48,6 +49,7 @@ def test_presenton_jwt_is_encrypted_and_used_server_side(monkeypatch, tmp_path):
     async def run():
         async with engine.begin() as connection:
             await connection.run_sync(PresentonCloudProvider.__table__.create)
+            await connection.run_sync(KeyValueSqlModel.__table__.create)
 
         async with session_maker() as session:
             await presenton_cloud.store_presenton_credentials(

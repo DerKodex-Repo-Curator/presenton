@@ -19,7 +19,7 @@ from utils.get_env import is_disable_auth_enabled
 from api.v1.auth.config import (
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
-    persist_admin_credentials,
+    get_or_create_auth_secret,
 )
 from api.v1.auth.presenton_oauth import PRESENTON_OAUTH_ROUTER
 
@@ -143,7 +143,7 @@ async def setup_credentials(
         )
     await session.commit()
     await session.refresh(user)
-    persist_admin_credentials(username, password_hash)
+    await get_or_create_auth_secret(session)
     return {
         "configured": True,
         "authenticated": False,
@@ -176,7 +176,7 @@ async def login(
     if replacement_hash:
         user.hashed_password = replacement_hash
         await session.commit()
-    token = await get_jwt_strategy().write_token(user)
+    token = await (await get_jwt_strategy(session)).write_token(user)
     response = JSONResponse(
         {
             "configured": True,

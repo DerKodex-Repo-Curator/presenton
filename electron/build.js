@@ -890,12 +890,6 @@ const config = {
     "app_dist",
     "NOTICE"
   ],
-  extraResources: [
-    {
-      from: path.join(__dirname, "..", "scripts", "user-config-env.cjs"),
-      to: "user-config-env.cjs",
-    },
-  ],
   afterPack,
   mac: {
     artifactName: "Presenton-${version}.${ext}",

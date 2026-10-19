@@ -3,7 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const originalFetch = globalThis.fetch;
 
 import { build } from "esbuild";
 
@@ -16,7 +18,7 @@ test.before(async () => {
     path.join(tmpdir(), "presenton-runtime-provider-config-")
   );
   const entryFile = path.join(temporaryDirectory, "entry.ts");
-  const outputFile = path.join(temporaryDirectory, "bundle.mjs");
+  const outputFile = path.join(temporaryDirectory, "bundle.cjs");
   await writeFile(
     entryFile,
     `export { readRuntimeProviderConfig } from ${JSON.stringify(
@@ -31,16 +33,16 @@ test.before(async () => {
     outfile: outputFile,
     bundle: true,
     platform: "node",
-    format: "esm",
+    format: "cjs",
+    plugins: [{ name: "next-runtime", setup(builder) { builder.onResolve({ filter: /^next\/server$/ }, () => ({ path: require.resolve("next/server"), external: true })); } }],
     tsconfig: path.resolve("tsconfig.json"),
     logLevel: "silent",
   });
-  runtimeConfig = await import(
-    `${pathToFileURL(outputFile).href}?cache=${Date.now()}`
-  );
+  runtimeConfig = require(outputFile);
 });
 
 test.after(async () => {
+  globalThis.fetch = originalFetch;
   if (temporaryDirectory) {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
@@ -67,7 +69,17 @@ test("regular-user runtime config keeps provider choices and redacts secrets", a
   process.env.USER_CONFIG_PATH = configPath;
 
   try {
-    const result = runtimeConfig.readRuntimeProviderConfig();
+    globalThis.fetch = async (url, options) => {
+      assert.ok(url.endsWith("/api/v1/config/runtime"));
+      assert.equal(options.headers.cookie, "presenton_session=session");
+      return Response.json({ config: {
+        LLM: "openrouter", OPENROUTER_MODEL: "openai/example-model",
+        OPENROUTER_API_KEY: "__configured__", IMAGE_PROVIDER: "pexels",
+        PEXELS_API_KEY: "__configured__", DISABLE_IMAGE_GENERATION: false,
+        LLM_MAX_OUTPUT_TOKENS: 16384,
+      } });
+    };
+    const result = await runtimeConfig.readRuntimeProviderConfig(new Request("http://localhost/api/runtime-config", { headers: { cookie: "presenton_session=session" } }));
     assert.equal(result.configured, true);
     assert.equal(result.config.LLM, "openrouter");
     assert.equal(result.config.OPENROUTER_MODEL, "openai/example-model");
@@ -92,7 +104,11 @@ test("runtime config migrates the removed DALL-E provider and keeps GPT Image 2 
   const previousPath = process.env.USER_CONFIG_PATH;
   process.env.USER_CONFIG_PATH = configPath;
   try {
-    const result = runtimeConfig.readRuntimeProviderConfig();
+    globalThis.fetch = async () => Response.json({ config: {
+      LLM: "openai", OPENAI_MODEL: "test-model", OPENAI_API_KEY: "__configured__",
+      IMAGE_PROVIDER: "dall-e-3", DALL_E_3_QUALITY: "hd",
+    } });
+    const result = await runtimeConfig.readRuntimeProviderConfig(new Request("http://localhost/api/runtime-config"));
     assert.equal(result.configured, true);
     assert.equal(result.config.IMAGE_PROVIDER, "gpt-image-2");
     assert.equal(result.config.GPT_IMAGE_2_QUALITY, "high");
@@ -113,4 +129,10 @@ test("image provider choices replace DALL-E 3 with GPT Image 2 and supported qua
   assert.deepEqual(runtimeConfig.GPT_IMAGE_2_QUALITY_OPTIONS.map(({ value }) => value), [
     "low", "medium", "high",
   ]);
+});
+
+
+test("runtime config fails closed when the database-backed service is unavailable", async () => {
+  globalThis.fetch = async () => new Response("Unavailable", { status: 503 });
+  await assert.rejects(runtimeConfig.readRuntimeProviderConfig(new Request("http://localhost/api/runtime-config")), /Unable to read runtime configuration/);
 });

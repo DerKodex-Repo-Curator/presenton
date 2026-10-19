@@ -15,6 +15,7 @@ class UserConfig(BaseModel):
         return data
 
     LLM: Optional[str] = None
+    DISABLE_ANONYMOUS_TRACKING: Optional[bool] = None
 
     # OpenAI
     OPENAI_API_KEY: Optional[str] = None

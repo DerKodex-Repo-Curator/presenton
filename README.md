@@ -371,6 +371,31 @@ The legacy `CAN_CHANGE_KEYS` variable is ignored and can be removed from existin
 deployments. Missing provider configuration leaves login status and initial
 account setup available so an admin can finish configuration in Settings.
 
+Provider configuration is stored in the database (`provider_settings`). On first
+initialization, an existing `userConfig.json` (or its valid `.bak`) is imported;
+saved JSON values take precedence over environment variables, which fill missing
+values. With no legacy file, provider environment variables seed the database.
+Once database settings exist, neither environment changes nor edits to the legacy
+file override them. Use **Settings** or the admin provider-settings API to update
+saved configuration, including clearing keys.
+
+Upgrades also import the existing session-signing/encryption secret into a private
+database record. This preserves existing browser sessions and encrypted API/cloud
+credentials. No configuration is written back to JSON, and new installations do
+not create that file. Existing files remain as private recovery/rollback copies;
+keep them until the upgraded installation has started successfully. A corrupt
+legacy file with no readable backup fails migration rather than silently importing
+empty settings. A read-only legacy file is supported.
+
+Back up the database (SQLite's `app_data/fastapi.db`, or the external database
+configured by `DATABASE_URL`) to retain settings, users, credentials, and content.
+`USER_CONFIG_PATH` is now only a legacy import location. Deployment settings such
+as database connection details and server ports remain environment variables.
+A deployment-level `DISABLE_ANONYMOUS_TRACKING=true` always disables telemetry.
+SQLite database and journal permissions are restricted to owner access where
+permitted. On shared volumes that prevent permission changes, restrict those
+files to trusted service accounts; startup logs a warning if it cannot do so.
+
 | Variable | Values / default | Purpose |
 | --- | --- | --- |
 | **PRESENTON_PUBLIC_URL** | Optional URL | Browser-reachable Presenton origin, such as `http://localhost:5001` or `https://slides.example.com`. Generated download, edit, and preview links use this origin. |
@@ -595,10 +620,10 @@ and owned data, and invalidate existing browser sessions and API keys. Remove th
 one-time flag after the successful startup.
 
 > [!IMPORTANT]
-> Do not remove authentication fields from `app_data/userConfig.json` to reset
-> access. Presenton stores a hashed recovery copy of the primary administrator
-> credentials and the session-signing secret there. Use the recovery variables above
-> to preserve the database account and its ownership links.
+> Authentication credentials and the session-signing/encryption secret are stored
+> in the database. Editing or deleting the legacy JSON file does not reset access.
+> Use the recovery variables above to preserve the account and ownership links.
+> Keep a database backup; the old JSON copy is not updated after migration.
 
 To sign out, open **Settings → Other → Sign out**.
 

@@ -19,7 +19,7 @@ from models.sql.webhook_subscription import WebhookSubscription
 from services.database import async_session_maker
 from api.v1.auth.config import (
     get_legacy_admin_credentials,
-    persist_admin_credentials,
+    get_or_create_auth_secret,
 )
 
 
@@ -67,11 +67,7 @@ async def bootstrap_database_admin() -> None:
                 await session.execute(delete(ApiKey))
                 await session.flush()
                 await session.commit()
-                persist_admin_credentials(
-                    admin.username,
-                    admin.hashed_password,
-                    rotate_secret=True,
-                )
+                await get_or_create_auth_secret(session, rotate=True)
                 logger.warning(
                     "Recovered bootstrap administrator credentials from environment."
                 )
@@ -120,7 +116,7 @@ async def bootstrap_database_admin() -> None:
         await session.flush()
         await session.commit()
         await session.refresh(admin)
-        persist_admin_credentials(username, password_hash)
+        await get_or_create_auth_secret(session)
         await _backfill_legacy_ownership(session, admin)
         logger.info("Migrated the bootstrap administrator into the user database.")
 

@@ -1,3 +1,4 @@
+from models.sql.key_value import KeyValueSqlModel
 import asyncio
 import json
 from unittest.mock import patch
@@ -37,6 +38,7 @@ def _build_client(tmp_path, lifespan=None) -> tuple[TestClient, object]:
     async def create_user_table():
         async with engine.begin() as connection:
             await connection.run_sync(User.__table__.create)
+            await connection.run_sync(KeyValueSqlModel.__table__.create)
             await connection.run_sync(ApiKey.__table__.create)
             await connection.run_sync(ProviderSettings.__table__.create)
             await connection.run_sync(PresentonCloudProvider.__table__.create)

@@ -10,7 +10,8 @@ from services.async_tasks import fail_interrupted_async_tasks
 from services.provider_settings import migrate_provider_settings_from_file
 from templates.default_templates import import_default_templates_on_startup
 from utils.get_env import get_app_data_directory_env
-from utils.user_config import update_env_with_user_config
+from utils.user_config import update_env_with_provider_config
+from api.v1.auth.config import get_or_create_auth_secret
 from api.v1.auth.bootstrap import bootstrap_database_admin
 
 logger = logging.getLogger(__name__)
@@ -60,9 +61,10 @@ async def app_lifespan(_: FastAPI):
         # BackgroundTasks are process-local and cannot resume after a restart.
         # Resolve their persisted rows before accepting polling requests.
         await fail_interrupted_async_tasks(session)
-        await migrate_provider_settings_from_file(session)
+        config = await migrate_provider_settings_from_file(session)
+        await get_or_create_auth_secret(session)
+        update_env_with_provider_config(config)
     await import_default_templates_on_startup()
-    update_env_with_user_config()
     yield
     # Shutdown: release all database connections to prevent stale/leaked pools.
     await dispose_engines()

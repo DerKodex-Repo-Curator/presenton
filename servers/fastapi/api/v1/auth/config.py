@@ -3,14 +3,18 @@ import hashlib
 import hmac
 import secrets
 from typing import Optional
+from uuid import UUID
 
-from utils.get_env import get_user_config_path_env
-from utils.user_config_store import read_user_config_file, update_user_config_file
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+from models.sql.key_value import KeyValueSqlModel
+from utils.legacy_config import read_legacy_config
+from utils.db_utils import secure_sqlite_database_permissions
 
 
 SESSION_COOKIE_NAME = "presenton_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
-AUTH_CONFIG_FIELDS = ("AUTH_USERNAME", "AUTH_PASSWORD_HASH", "AUTH_SECRET_KEY")
+AUTH_SETTINGS_ID = UUID("b4eacdb7-7ac2-4ac6-9fa7-51776f00cf14")
 
 
 def _base64url_encode(data: bytes) -> str:
@@ -20,31 +24,6 @@ def _base64url_encode(data: bytes) -> str:
 def _base64url_decode(value: str) -> bytes:
     padded = value + "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(padded.encode("utf-8"))
-
-
-def _load_user_config() -> dict:
-    user_config_path = get_user_config_path_env()
-    if not user_config_path:
-        return {}
-    return read_user_config_file(user_config_path)
-
-
-def _save_auth_config(config: dict) -> None:
-    user_config_path = get_user_config_path_env()
-    if not user_config_path:
-        raise ValueError("USER_CONFIG_PATH is not set")
-
-    auth_config = {
-        key: config[key]
-        for key in AUTH_CONFIG_FIELDS
-        if key in config
-    }
-
-    def merge_auth_config(existing: dict) -> dict:
-        existing.update(auth_config)
-        return existing
-
-    update_user_config_file(user_config_path, merge_auth_config)
 
 
 def verify_legacy_password_hash(password: str, encoded_hash: str) -> bool:
@@ -68,40 +47,53 @@ def verify_legacy_password_hash(password: str, encoded_hash: str) -> bool:
         return False
 
 
-def get_or_create_auth_secret() -> str:
-    """Return the deployment signing secret used by database-backed JWT auth."""
-    config = _load_user_config()
-    secret = config.get("AUTH_SECRET_KEY")
-    if isinstance(secret, str) and secret:
-        return secret
+async def get_or_create_auth_secret(
+    session: AsyncSession, *, rotate: bool = False
+) -> str:
+    """Persist the deployment key in a private DB row, importing the old key once.
 
-    secret = _base64url_encode(secrets.token_bytes(32))
-    config["AUTH_SECRET_KEY"] = secret
-    _save_auth_config(config)
+    The same key encrypts existing API keys and cloud credentials: an upgrade
+    must preserve it even when provider settings were already migrated earlier.
+    """
+    row = await session.get(
+        KeyValueSqlModel, AUTH_SETTINGS_ID,
+        with_for_update=rotate, populate_existing=True,
+    )
+    if row is not None and not rotate:
+        secret = row.value.get("AUTH_SECRET_KEY")
+        if not isinstance(secret, str) or not secret:
+            raise RuntimeError("Database authentication signing key is invalid")
+        return secret
+    legacy = read_legacy_config() if row is None else {}
+    if session.bind is not None:
+        secure_sqlite_database_permissions(str(session.bind.url))
+    secret = legacy.get("AUTH_SECRET_KEY") if not rotate else None
+    if not isinstance(secret, str) or not secret:
+        secret = _base64url_encode(secrets.token_bytes(32))
+    if row is None:
+        try:
+            async with session.begin_nested():
+                session.add(KeyValueSqlModel(
+                    id=AUTH_SETTINGS_ID,
+                    key="deployment_auth",
+                    value={"AUTH_SECRET_KEY": secret},
+                ))
+                await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            return await get_or_create_auth_secret(session)
+    else:
+        row.value = {"AUTH_SECRET_KEY": secret}
+    await session.commit()
     return secret
 
 
 def get_legacy_admin_credentials() -> tuple[Optional[str], Optional[str]]:
-    """Return the pre-multi-user username and encoded password hash, if present."""
-    config = _load_user_config()
+    """Used only when no database accounts exist."""
+    config = read_legacy_config()
     username = config.get("AUTH_USERNAME")
     password_hash = config.get("AUTH_PASSWORD_HASH")
     return (
         username.strip() if isinstance(username, str) and username.strip() else None,
         password_hash if isinstance(password_hash, str) and password_hash else None,
     )
-
-
-def persist_admin_credentials(
-    username: str,
-    password_hash: str,
-    *,
-    rotate_secret: bool = False,
-) -> None:
-    """Keep the rollback/recovery credential copy in userConfig.json current."""
-    config = _load_user_config()
-    config["AUTH_USERNAME"] = username.strip()
-    config["AUTH_PASSWORD_HASH"] = password_hash
-    if rotate_secret or not config.get("AUTH_SECRET_KEY"):
-        config["AUTH_SECRET_KEY"] = _base64url_encode(secrets.token_bytes(32))
-    _save_auth_config(config)

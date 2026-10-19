@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+from unittest.mock import AsyncMock
 from types import SimpleNamespace
 import uuid
 
@@ -25,20 +26,20 @@ def test_api_key_can_be_securely_revealed_by_admin(monkeypatch):
     monkeypatch.setattr(
         api_keys,
         "get_or_create_auth_secret",
-        lambda: "deployment-auth-secret",
+        AsyncMock(return_value="deployment-auth-secret"),
     )
     token = api_keys.build_api_key("0123456789abcdef", "s" * 40)
     api_key = ApiKey(
         id="0123456789abcdef",
         secret_hash="hashed",
-        token_encrypted=api_keys.encrypt_api_key(token),
+        token_encrypted=api_keys.encrypt_api_key(token, "deployment-auth-secret"),
         user_id=uuid.uuid4(),
         created_by_id=uuid.uuid4(),
         expires_at=get_current_utc_datetime() + timedelta(days=1),
     )
 
     assert token not in api_key.token_encrypted
-    assert api_keys.reveal_api_key(api_key) == token
+    assert asyncio.run(api_keys.reveal_api_key(None, api_key)) == token
 
 
 def test_verify_api_key_accepts_active_normal_user(monkeypatch):

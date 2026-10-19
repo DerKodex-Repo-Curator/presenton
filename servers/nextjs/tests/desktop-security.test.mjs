@@ -21,6 +21,8 @@ test.before(async () => {
   await writeFile(entry, [
     `export * from ${source("lib/desktop-auth.ts")};`,
     `export * as configRoute from ${source("app/api/user-config/route.ts")};`,
+    `export * as telemetryRoute from ${source("app/api/telemetry-status/route.ts")};`,
+    `export * as runtimeRoute from ${source("app/api/runtime-config/route.ts")};`,
     `export { handleSaveLLMConfig } from ${source("utils/storeHelpers.ts")};`,
     `export { store } from ${source("store/store.ts")};`,
     `export * as readFileRoute from ${source("app/api/read-file/route.ts")};`,
@@ -142,6 +144,9 @@ test("regular users receive redacted settings and cannot change provider keys", 
     if (url.endsWith("/auth/status")) {
       return Response.json({ configured: true, authenticated: true, role: "user", user_id: "member" });
     }
+    if (url.endsWith("/config/runtime")) {
+      return Response.json({ config: { LLM: "openai", OPENAI_MODEL: "test-model", OPENAI_API_KEY: "__configured__", DISABLE_IMAGE_GENERATION: true } });
+    }
     writes++;
     throw new Error(`Unexpected provider request: ${url}`);
   };
@@ -216,4 +221,15 @@ test("Electron bootstraps a fresh private credential and injects it only on exac
   await security.electronAuth.initializeDesktopSession(fakeSession, origins);
   assert.notEqual(cookie.value, first);
   process.env.PRESENTON_DESKTOP_TOKEN = TOKEN;
+});
+
+
+test("unavailable configuration fails closed without enabling telemetry or reading JSON", async () => {
+  globalThis.fetch = async (url) => url.endsWith("/auth/status")
+    ? Response.json({ authenticated: true, role: "user" })
+    : new Response("Unavailable", { status: 503 });
+  const telemetry = await security.telemetryRoute.GET(request(undefined, { headers: authorized }));
+  assert.deepEqual(await telemetry.json(), { telemetryEnabled: false });
+  const runtime = await security.runtimeRoute.GET(request(undefined, { headers: authorized }));
+  assert.equal(runtime.status, 503);
 });

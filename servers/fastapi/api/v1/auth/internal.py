@@ -21,5 +21,5 @@ async def authenticated_internal_request_headers() -> dict[str, str]:
         user = await session.get(User, owner_id)
         if user is None or not user.is_active:
             return {}
-        token = await get_jwt_strategy().write_token(user)
+        token = await (await get_jwt_strategy(session)).write_token(user)
     return {"Cookie": f"{SESSION_COOKIE_NAME}={token}"}

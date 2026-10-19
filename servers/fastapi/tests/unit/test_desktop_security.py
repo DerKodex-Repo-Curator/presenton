@@ -106,7 +106,8 @@ def test_settings_attack_is_denied_and_authorized_no_login_save_works(desktop_cl
     assert status.json()["role"] == "admin"
     saved = client.put("/api/v1/admin/provider-settings", json=config, headers=headers)
     assert saved.status_code == 200
-    assert json.loads((root / "userConfig.json").read_text())["CUSTOM_MODEL"] == "test"
+    assert not (root / "userConfig.json").exists()
+    assert client.get("/api/v1/admin/provider-settings", headers=headers).json()["CUSTOM_MODEL"] == "test"
     assert client.get("/api/v1/admin/provider-settings", headers=headers).json()["CUSTOM_LLM_URL"] == config["CUSTOM_LLM_URL"]
 
 

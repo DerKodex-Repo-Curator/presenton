@@ -47,7 +47,7 @@ export async function GET(request: Request) {
   // never be sent to their browser.
   if (auth.role !== "admin") {
     try {
-      return NextResponse.json(readRuntimeProviderConfig().config);
+      return NextResponse.json((await readRuntimeProviderConfig(request)).config);
     } catch {
       return NextResponse.json(
         { error: "Unable to read provider settings", status: 500 },

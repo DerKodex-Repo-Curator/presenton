@@ -28,7 +28,7 @@ from models.sql.provider_settings import ProviderSettings
 from models.sql.presenton_cloud_provider import PresentonCloudProvider
 from api.v1.auth.context import get_current_owner_id
 from utils.get_env import get_migrate_database_on_startup_env
-from utils.db_utils import get_database_url_and_connect_args, get_pool_kwargs
+from utils.db_utils import get_database_url_and_connect_args, get_pool_kwargs, secure_sqlite_database_permissions
 
 
 database_url, connect_args = get_database_url_and_connect_args()
@@ -140,6 +140,7 @@ async def create_db_and_tables():
                     ],
                 )
             )
+    secure_sqlite_database_permissions(database_url)
 
 
 async def dispose_engines():

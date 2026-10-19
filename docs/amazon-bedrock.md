@@ -1,6 +1,6 @@
 # Amazon Bedrock provider
 
-Presenton can use **Amazon Bedrock** as the text LLM provider for presentation generation, editing, and chat. Configure Bedrock in the app UI (**Settings → Text provider**) or with environment variables / `userConfig.json` (Docker and desktop).
+Presenton can use **Amazon Bedrock** as the text LLM provider for presentation generation, editing, and chat. Configure Bedrock in the app UI (**Settings → Text provider**) or seed a new installation with environment variables (Docker and desktop). Saved configuration is database-backed; legacy `userConfig.json` files are imported once during upgrade.
 
 The backend sends your configured **Model** value to the Bedrock **Converse** API as `modelId`. That means you can use:
 

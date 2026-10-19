@@ -139,7 +139,7 @@ def _get_codex_access_token() -> str:
                     get_account_id,
                     refresh_access_token,
                 )
-                from utils.user_config import save_codex_tokens_to_user_config
+                from utils.user_config import save_codex_tokens_to_database
 
                 result = refresh_access_token(refresh_token)
                 if not isinstance(result, TokenSuccess):
@@ -158,7 +158,7 @@ def _get_codex_access_token() -> str:
                 account_id = get_account_id(result.access)
                 if account_id:
                     set_codex_account_id_env(account_id)
-                save_codex_tokens_to_user_config()
+                save_codex_tokens_to_database()
                 access_token = result.access
         except (TypeError, ValueError):
             pass

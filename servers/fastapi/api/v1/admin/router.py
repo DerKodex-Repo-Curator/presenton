@@ -3,6 +3,7 @@ import os
 import shutil
 from typing import Any
 
+from pydantic import ValidationError
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +36,6 @@ from utils.get_env import (
     get_presenton_oauth_issuer,
     is_disable_auth_enabled,
 )
-from utils.user_config import update_env_with_user_config
 
 
 API_V1_ADMIN_ROUTER = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
@@ -97,7 +97,7 @@ async def get_api_key_token(
         raise HTTPException(status_code=404, detail="API key not found")
     if api_key.revoked_at is not None:
         raise HTTPException(status_code=410, detail="API key has been revoked")
-    token = reveal_api_key(api_key)
+    token = await reveal_api_key(session, api_key)
     if token is None:
         raise HTTPException(
             status_code=409,
@@ -161,9 +161,11 @@ async def update_provider_settings(
     _: None = Depends(require_settings_admin),
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
-    saved = await save_provider_settings(session, config)
-    update_env_with_user_config()
-    return saved
+    try:
+        return await save_provider_settings(session, config)
+    except ValidationError as error:
+        fields = sorted({str(item["loc"][0]) for item in error.errors()})
+        raise HTTPException(422, "Invalid provider settings: " + ", ".join(fields)) from None
 
 
 @API_V1_ADMIN_ROUTER.get("/users", response_model=list[PublicUser])

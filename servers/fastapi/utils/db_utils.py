@@ -1,7 +1,36 @@
 import os
 from utils.get_env import get_app_data_directory_env, get_database_url_env
-from urllib.parse import urlsplit, urlunsplit, parse_qsl
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, unquote
 import ssl
+import logging
+
+from sqlalchemy.engine import make_url
+
+
+def secure_sqlite_database_permissions(database_url: str) -> None:
+    """Keep local database credentials private, including existing journals."""
+    url = make_url(database_url)
+    path = url.database
+    if not url.drivername.startswith("sqlite") or not path or path == ":memory:":
+        return
+    if path.startswith("file:"):
+        uri = urlsplit(path)
+        if uri.path == ":memory:" or url.query.get("mode") == "memory":
+            return
+        path = unquote(uri.path)
+        if uri.netloc and uri.netloc != "localhost":
+            path = f"//{uri.netloc}{path}"
+    for file_path in (path, path + "-wal", path + "-shm", path + "-journal"):
+        try:
+            os.chmod(file_path, 0o600)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            # Existing shared/PVC volumes may not permit chmod by their UID.
+            # Do not break those deployments; surface the required remediation.
+            logging.getLogger(__name__).warning(
+                "Cannot restrict SQLite file permissions; ensure the database and journals are accessible only to trusted service accounts"
+            )
 
 
 def _ensure_sqlite_parent_dir(database_url: str) -> None:

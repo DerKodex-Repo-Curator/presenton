@@ -50,7 +50,6 @@ import {
   removeBrokenExportChromiumCaches,
   resolveLaunchableExportChromiumPath,
 } from "./utils/export-chromium";
-import { syncUserConfigFromEnv } from "./utils/user-config-env";
 import { resolveExportRuntimeRoot } from "./utils/export-msix-runtime";
 import { initializeDesktopSession } from "./utils/desktop-auth";
 
@@ -482,12 +481,6 @@ app.whenReady().then(async () => {
 
   // Create the main window hidden; the app splash handles the visible startup state.
   createWindow(`${localhost}:${nextjsPort}`);
-
-  try {
-    syncUserConfigFromEnv();
-  } catch (error) {
-    safeWarn("[Presenton] Failed to persist startup user config", error);
-  }
 
   try {
     await startServers(fastApiPort, nextjsPort);

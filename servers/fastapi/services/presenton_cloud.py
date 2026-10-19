@@ -25,21 +25,21 @@ class PresentonCloudError(RuntimeError):
         self.detail = detail
 
 
-def _token_cipher() -> Fernet:
-    secret = get_or_create_auth_secret().encode("utf-8")
+def _token_cipher(secret: str) -> Fernet:
+    secret = secret.encode("utf-8")
     key = hashlib.sha256(b"presenton-oauth-credentials-v1:" + secret).digest()
     return Fernet(base64.urlsafe_b64encode(key))
 
 
-def _encrypt_token(token: str) -> str:
-    return _token_cipher().encrypt(token.encode("utf-8")).decode("utf-8")
+def _encrypt_token(token: str, secret: str) -> str:
+    return _token_cipher(secret).encrypt(token.encode("utf-8")).decode("utf-8")
 
 
-def _decrypt_token(token: str | None) -> str | None:
+def _decrypt_token(token: str | None, secret: str) -> str | None:
     if not token:
         return None
     try:
-        return _token_cipher().decrypt(token.encode("utf-8")).decode("utf-8")
+        return _token_cipher(secret).decrypt(token.encode("utf-8")).decode("utf-8")
     except (InvalidToken, ValueError) as exc:
         raise PresentonCloudError(
             401,
@@ -90,6 +90,7 @@ async def store_presenton_credentials(
     access_token: str,
     expires_in: int,
 ) -> PresentonCloudProvider:
+    secret = await get_or_create_auth_secret(session)
     provider = await session.get(
         PresentonCloudProvider,
         GLOBAL_PROVIDER_ID,
@@ -105,7 +106,7 @@ async def store_presenton_credentials(
     provider.issuer = issuer
     provider.subject = subject
     provider.email = email
-    provider.access_token_encrypted = _encrypt_token(access_token)
+    provider.access_token_encrypted = _encrypt_token(access_token, secret)
     provider.token_expires_at = get_current_utc_datetime() + timedelta(
         seconds=max(1, expires_in)
     )
@@ -133,7 +134,7 @@ async def get_valid_presenton_access_token(
         raise PresentonCloudError(401, "Connect the global Presenton provider first")
     assert provider is not None
 
-    access_token = _decrypt_token(provider.access_token_encrypted)
+    access_token = _decrypt_token(provider.access_token_encrypted, await get_or_create_auth_secret(session))
     if not access_token:
         raise PresentonCloudError(401, "Reconnect your Presenton account")
     return access_token, provider
@@ -191,7 +192,7 @@ async def revoke_and_clear_presenton_provider(
 ) -> None:
     access_token: str | None
     try:
-        access_token = _decrypt_token(provider.access_token_encrypted)
+        access_token = _decrypt_token(provider.access_token_encrypted, await get_or_create_auth_secret(session))
     except PresentonCloudError:
         access_token = None
 

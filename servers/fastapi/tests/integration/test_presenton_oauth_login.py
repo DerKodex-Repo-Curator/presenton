@@ -1,3 +1,4 @@
+from models.sql.key_value import KeyValueSqlModel
 import asyncio
 
 import httpx
@@ -23,6 +24,7 @@ def _build_client(tmp_path) -> tuple[TestClient, object, object]:
     async def create_tables():
         async with engine.begin() as connection:
             await connection.run_sync(User.__table__.create)
+            await connection.run_sync(KeyValueSqlModel.__table__.create)
             await connection.run_sync(PresentonCloudProvider.__table__.create)
             await connection.run_sync(ProviderSettings.__table__.create)
 

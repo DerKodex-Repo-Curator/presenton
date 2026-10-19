@@ -79,7 +79,7 @@ def _read_json_if_valid(file_path: str) -> dict | None:
     try:
         content = str(_retry(f"read {os.path.basename(file_path)}", read_text)).strip()
         if not content:
-            return {}
+            return None
         parsed = json.loads(content)
         return parsed if isinstance(parsed, dict) else None
     except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -199,13 +199,18 @@ def _write_atomic_json(config_path: str, config: dict, primary_valid: bool) -> N
         raise
 
 
-def read_user_config_file(config_path: str) -> dict:
+def read_user_config_file(config_path: str, *, strict: bool = False) -> dict:
     try:
         _ensure_parent_directory(config_path)
         _harden_existing_config_permissions(config_path)
+        if strict and any(os.path.exists(path) for path in (config_path, _backup_path(config_path))):
+            if _read_json_if_valid(config_path) is None and _read_json_if_valid(_backup_path(config_path)) is None:
+                raise RuntimeError("Cannot read legacy configuration or its backup")
         config, _ = _read_snapshot(config_path)
         return dict(config)
     except Exception:
+        if strict:
+            raise
         return {}
 
 

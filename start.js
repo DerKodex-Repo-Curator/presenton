@@ -1,28 +1,20 @@
-/* This script starts the FastAPI and Next.js servers, setting up user configuration if necessary. It reads environment variables to configure API keys and other settings, ensuring that the user configuration file is created if it doesn't exist. The script also handles the starting of both servers and keeps the Node.js process alive until one of the servers exits. */
+/* Start Presenton services. FastAPI initializes authoritative database configuration. */
 
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { spawn, spawnSync } from "child_process";
-import { randomUUID } from "crypto";
 import { request } from "http";
 import {
   chmodSync,
-  closeSync,
   copyFileSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
-  openSync,
   readdirSync,
   readFileSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
 import { printPresentonStartupBanner } from "./scripts/presenton-terminal-banner.mjs";
-import userConfigEnv from "./scripts/user-config-env.cjs";
-
-const { buildUserConfigFromEnv, readUserConfigEnv } = userConfigEnv;
 
 process.umask(0o022);
 
@@ -51,9 +43,9 @@ if (!appDataDirectory) {
 }
 
 const appDataDirectoryMode = 0o755;
-const userConfigPath = join(appDataDirectory, "userConfig.json");
-const userConfigBackupPath = `${userConfigPath}.bak`;
-const userDataDir = dirname(userConfigPath);
+// Only used to locate a legacy file for FastAPI's one-time import.
+const userConfigPath = process.env.USER_CONFIG_PATH || join(appDataDirectory, "userConfig.json");
+const userDataDir = appDataDirectory;
 const appDataStaticDirectories = [
   "exports",
   "images",
@@ -106,68 +98,6 @@ const ensureAppDataDirectories = () => {
 };
 
 ensureAppDataDirectories();
-
-const readJsonConfig = (filePath) => {
-  try {
-    if (!existsSync(filePath)) {
-      return undefined;
-    }
-    const raw = readFileSync(filePath, "utf8").trim();
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const readUserConfig = () =>
-  readJsonConfig(userConfigPath) || readJsonConfig(userConfigBackupPath) || {};
-
-const copyUserConfigBackup = () => {
-  try {
-    if (readJsonConfig(userConfigPath)) {
-      copyFileSync(userConfigPath, userConfigBackupPath);
-      chmodBestEffort(userConfigBackupPath, 0o644);
-    }
-  } catch (error) {
-    console.warn("Failed to update user config backup:", error);
-  }
-};
-
-const writeUserConfig = (config) => {
-  ensureReadableDirectory(userDataDir);
-  copyUserConfigBackup();
-
-  const tempPath = `${userConfigPath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-  const fd = openSync(tempPath, "w");
-  try {
-    writeFileSync(fd, JSON.stringify(config), "utf8");
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-
-  try {
-    renameSync(tempPath, userConfigPath);
-  } catch (error) {
-    try {
-      unlinkSync(tempPath);
-    } catch {
-      // Best-effort cleanup.
-    }
-    throw error;
-  }
-
-  chmodBestEffort(userConfigPath, 0o644);
-  if (!existsSync(userConfigBackupPath)) {
-    copyUserConfigBackup();
-  }
-};
 
 // Setup node_modules for development
 const setupNodeModules = () => {
@@ -515,15 +445,6 @@ if (!process.env.FAST_API_INTERNAL_URL) {
 }
 
 //? UserConfig is only setup if API Keys can be changed
-const setupUserConfigFromEnv = () => {
-  const existingConfig = readUserConfig();
-  const envConfig = readUserConfigEnv(process.env);
-  if (Object.keys(existingConfig).length > 0 && Object.keys(envConfig).length === 0) {
-    return;
-  }
-  writeUserConfig(buildUserConfigFromEnv(existingConfig, process.env));
-};
-
 const startServers = async (nginxReadyPromise) => {
   const managedProcesses = new Set();
   let isShuttingDown = false;
@@ -753,8 +674,6 @@ const main = async () => {
     await setupNodeModules();
     await ensurePresentationExportNodeDependencies();
   }
-
-  setupUserConfigFromEnv();
 
   syncNginxConfigForDev();
 

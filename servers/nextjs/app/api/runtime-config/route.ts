@@ -10,11 +10,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ detail: "Unauthorized" }, { status: 401 });
   }
   try {
-    return NextResponse.json(readRuntimeProviderConfig());
+    return NextResponse.json(await readRuntimeProviderConfig(request));
   } catch {
     return NextResponse.json(
       { configured: false, config: {} },
-      { status: 200 }
+      { status: 503 }
     );
   }
 }

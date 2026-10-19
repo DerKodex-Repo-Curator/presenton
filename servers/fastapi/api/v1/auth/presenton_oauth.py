@@ -24,7 +24,6 @@ from utils.get_env import (
     get_presenton_oauth_issuer,
     is_disable_auth_enabled,
 )
-from utils.user_config import update_env_with_user_config
 
 PRESENTON_OAUTH_ROUTER = APIRouter(
     prefix="/presenton",
@@ -157,7 +156,6 @@ async def logout_presenton_account(
         # provider. Keep that state explicit so the UI can require a new
         # provider choice instead of silently selecting an unconfigured one.
         await save_provider_settings(session, {"LLM": None})
-        update_env_with_user_config()
     return {"detail": "Disconnected from Presenton successfully"}
 
 

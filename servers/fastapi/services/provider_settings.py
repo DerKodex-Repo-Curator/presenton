@@ -1,14 +1,18 @@
 import logging
+import os
 from typing import Any
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
 from models.sql.provider_settings import ProviderSettings
 from utils.datetime_utils import get_current_utc_datetime
 from utils.db_utils import get_database_url_and_connect_args, to_sync_sqlalchemy_url
-from utils.get_env import get_user_config_path_env
-from utils.user_config_store import read_user_config_file, update_user_config_file
+from utils.legacy_config import read_legacy_config
+from utils.user_config import initial_provider_config, normalize_provider_config, update_env_with_provider_config
 
 
 logger = logging.getLogger(__name__)
@@ -82,39 +86,24 @@ def merge_provider_settings(
     return merged
 
 
-def _mirror_to_legacy_file(config: dict[str, Any]) -> None:
-    """Mirror DB settings for code paths that still consume userConfig.json."""
-    path = get_user_config_path_env()
-    if not path:
-        return
-
-    def replace_provider_config(existing: dict[str, Any]) -> dict[str, Any]:
-        mirrored = dict(config)
-        # Authentication is database-backed now, but the compatibility file is
-        # also the rollback/recovery copy. Never discard its credential fields.
-        for key, value in existing.items():
-            if key.upper().startswith("AUTH_"):
-                mirrored[key] = value
-        return mirrored
-
-    update_user_config_file(path, replace_provider_config)
-
-
 async def migrate_provider_settings_from_file(session: AsyncSession) -> dict[str, Any]:
-    """One-time startup import, followed by DB-to-file compatibility syncing."""
+    """Import only when no DB settings exist; never write the legacy file."""
     row = await session.get(ProviderSettings, PROVIDER_SETTINGS_ID)
-    path = get_user_config_path_env()
 
     if row is None:
-        legacy_config = read_user_config_file(path) if path else {}
+        legacy_config = initial_provider_config(read_legacy_config())
         row = ProviderSettings(
             id=PROVIDER_SETTINGS_ID,
             config=sanitize_provider_settings(legacy_config),
         )
         session.add(row)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return await migrate_provider_settings_from_file(session)
         await session.refresh(row)
-        logger.info("Migrated provider settings from userConfig.json into the database.")
+        logger.info("Initialized database provider settings from legacy configuration and environment defaults.")
     else:
         sanitized = sanitize_provider_settings(dict(row.config or {}))
         if sanitized != row.config:
@@ -123,7 +112,6 @@ async def migrate_provider_settings_from_file(session: AsyncSession) -> dict[str
             await session.commit()
 
     config = dict(row.config or {})
-    _mirror_to_legacy_file(config)
     return config
 
 
@@ -137,55 +125,62 @@ async def get_provider_settings(session: AsyncSession) -> dict[str, Any]:
 async def save_provider_settings(
     session: AsyncSession, incoming: dict[str, Any]
 ) -> dict[str, Any]:
-    row = await session.get(ProviderSettings, PROVIDER_SETTINGS_ID)
-    if row is None:
-        existing: dict[str, Any] = {}
-        row = ProviderSettings(id=PROVIDER_SETTINGS_ID, config={})
-        session.add(row)
-    else:
-        existing = dict(row.config or {})
+    # Row locks serialize server databases. The timestamp comparison also
+    # protects SQLite, where SELECT FOR UPDATE is not supported.
+    for _ in range(5):
+        row = await session.get(
+            ProviderSettings, PROVIDER_SETTINGS_ID,
+            with_for_update=True, populate_existing=True,
+        )
+        if row is None:
+            await migrate_provider_settings_from_file(session)
+            continue
+        config = normalize_provider_config(
+            merge_provider_settings(dict(row.config or {}), incoming)
+        )
+        statement = update(ProviderSettings).where(
+            ProviderSettings.id == PROVIDER_SETTINGS_ID,
+            ProviderSettings.updated_at == row.updated_at,
+        ).values(config=config, updated_at=get_current_utc_datetime())
+        result = await session.execute(
+            statement, execution_options={"synchronize_session": False}
+        )
+        if result.rowcount == 1:
+            await session.commit()
+            session.expire(row)
+            update_env_with_provider_config(config)
+            return config
+        await session.rollback()
+    raise RuntimeError("Provider settings changed concurrently; retry the update")
 
-    row.config = merge_provider_settings(existing, incoming)
-    row.updated_at = get_current_utc_datetime()
-    await session.commit()
-    await session.refresh(row)
 
-    config = dict(row.config or {})
-    _mirror_to_legacy_file(config)
-    return config
+def _sync_engine():
+    database_url = os.getenv("DATABASE_URL") or get_database_url_and_connect_args()[0]
+    return create_engine(to_sync_sqlalchemy_url(database_url), poolclass=NullPool)
 
 
-def sync_legacy_file_to_provider_settings() -> None:
-    """Persist changes made by remaining synchronous userConfig writers.
-
-    Codex token refresh currently occurs in synchronous provider code, so this
-    narrow compatibility bridge keeps those rare writes in the DB as well.
-    """
-    path = get_user_config_path_env()
-    if not path:
-        return
-    config = sanitize_provider_settings(read_user_config_file(path))
-    database_url, _ = get_database_url_and_connect_args()
-    engine = create_engine(to_sync_sqlalchemy_url(database_url))
+def patch_provider_settings_sync(patch: dict[str, Any]) -> None:
+    """OAuth refresh patches only its managed fields, never a stale JSON copy."""
+    if set(patch) - (CODEX_MANAGED_FIELDS | {"CODEX_MODEL"}):
+        raise ValueError("Only Codex-managed fields can be changed by token refresh")
+    engine = _sync_engine()
     try:
-        with engine.begin() as connection:
-            table = ProviderSettings.__table__
-            exists = connection.execute(
-                select(table.c.id).where(table.c.id == PROVIDER_SETTINGS_ID)
-            ).scalar_one_or_none()
-            values = {
-                "config": config,
-                "updated_at": get_current_utc_datetime(),
-            }
-            if exists is None:
-                connection.execute(
-                    table.insert().values(id=PROVIDER_SETTINGS_ID, **values)
+        for _ in range(5):
+            with Session(engine) as session:
+                row = session.get(ProviderSettings, PROVIDER_SETTINGS_ID, with_for_update=True)
+                if row is None:
+                    raise RuntimeError("Provider settings have not been initialized")
+                config = {**dict(row.config or {}), **patch}
+                statement = update(ProviderSettings).where(
+                    ProviderSettings.id == PROVIDER_SETTINGS_ID,
+                    ProviderSettings.updated_at == row.updated_at,
+                ).values(config=config, updated_at=get_current_utc_datetime())
+                result = session.execute(
+                    statement, execution_options={"synchronize_session": False}
                 )
-            else:
-                connection.execute(
-                    table.update()
-                    .where(table.c.id == PROVIDER_SETTINGS_ID)
-                    .values(**values)
-                )
+                if result.rowcount == 1:
+                    session.commit()
+                    return
+        raise RuntimeError("Provider settings changed concurrently; retry token refresh")
     finally:
         engine.dispose()

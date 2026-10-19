@@ -25,7 +25,7 @@ async def resolve_request_principal(
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
     if cookie_token:
         user_db = UsernameUserDatabase(session)
-        user = await get_jwt_strategy().read_token(cookie_token, UserManager(user_db))
+        user = await (await get_jwt_strategy(session)).read_token(cookie_token, UserManager(user_db))
         if user:
             return (
                 AuthPrincipal(

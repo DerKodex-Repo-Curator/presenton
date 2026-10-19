@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -68,3 +69,10 @@ def load_snapshot(snapshots_dir: Path):
         return json.loads(path.read_text(encoding="utf-8"))
 
     return _load
+
+
+@pytest.fixture(autouse=True)
+def isolate_process_environment():
+    """Provider runtime projection must not leak settings between tests."""
+    with patch.dict("os.environ"):
+        yield

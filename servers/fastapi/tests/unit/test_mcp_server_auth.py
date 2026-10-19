@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 import uuid
 
 import httpx
@@ -50,6 +51,7 @@ def _mock_api_key_verifier(monkeypatch, token: str | None):
         return None
 
     monkeypatch.setattr(mcp_server, "verify_api_key", verify_api_key)
+    monkeypatch.setattr(mcp_server, "get_jwt_strategy", AsyncMock(return_value=SimpleNamespace(write_token=AsyncMock(return_value="internal-session"))))
 
     class SessionContext:
         async def __aenter__(self):
@@ -86,7 +88,7 @@ def test_presenton_token_verifier_uses_generation_length_internal_session(monkey
         async def write_token(self, _user):
             return "internal-session"
 
-    def strategy(*, lifetime_seconds):
+    async def strategy(_session, *, lifetime_seconds):
         captured["lifetime_seconds"] = lifetime_seconds
         return Strategy()
 
